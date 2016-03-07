@@ -350,7 +350,7 @@ def getStatus(opts, gcm):
         print json.dumps(status)
         return
 
-    if "item" in status.keys():
+    if "items" in status.keys():
         for item in status["items"]:
             node = convertNodeData(opts, gcm, item)
             nodes.append(node)
