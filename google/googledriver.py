@@ -42,6 +42,9 @@ class GoogleComputeManager:
     authState = None
     creds = None
 
+    BROCADE_PROJECT = 'brocade-public-1063'
+    BROCADE_VTM = 'vtm-103r1-stm-dev-64'
+
     def __init__(self, project, zone, authFile=None, authState=None):
 
         if authFile is not None:
@@ -69,15 +72,32 @@ class GoogleComputeManager:
         instance = GoogleComputeInstance(name,project,zone,image,machineType)
         self.instances[name] = instance
 
-    def newDevVTM(self, name, script=None, solutionKey=None):
-        self.newInst(name, 'brocade-public-1063:vtm-103-stm-dev-64')
+    def newVTM(self, name, image=BROCADE_VTM, project=BROCADE_PROJECT, 
+                 script=None, solutionKey=None):
+        self.newInst(name, project + ":" + image )
         self.instances[name].addTags( ["http-server", "https-server", \
-                            "tcp-9090-server", "google-cloud-marketplace"] )
+                            "tcp-9090-server", "tcp-9070-server", \
+                            "google-cloud-marketplace"] )
         if script is not None:
-            self.instances[name].addScript(script)
+            if os.path.exists(script) == False:
+                sys.stderr.write("ERR - Cant find script: " + opts['script'])
+                return
+            else:
+                sf = open(script,'r')
+                script = sf.read()
+                sf.close()
+                self.instances[name].addScript(script)
 
         self.instances[name].addMeta("google-cloud-marketplace-solution-key", \
             "brocade-public-1063:stm-dev")
+
+        self.instances[name].allowIpForward()
+        self.instances[name].allowComputeAPI()
+
+        print "Starting: " + json.dumps(self.instances[name].conf)
+
+        status = self.start(name)
+        print status
 
     def auth(self):
         now = time.time()
@@ -154,7 +174,17 @@ class GoogleComputeManager:
         response = requests.get( diskUri, headers=headers)
         return response.json()
 
+    def listVTMs(self):
+        headers = { 'Authorization': 'Bearer ' + self.creds['access_token'] }
+        imageURI = self.api + "brocade-public-1063/global/images"
+        response = requests.get( imageURI, headers=headers)
+        list = response.json()
+        if "items" in list.keys():
+            for item in list["items"]:
+                if item['status'] == "READY":
+                    print "{}\t\t{}".format(item['description'],item['name'])
 	
+
 class GoogleComputeInstance:
 
     deployed = False
@@ -164,6 +194,7 @@ class GoogleComputeInstance:
     image = "vtm-103-stm-dev-64"
 
     endpoint = "https://www.googleapis.com/compute/v1/projects/"
+    compScope = 'https://www.googleapis.com/auth/cloud-platform'
     zone = "europe-west1-b"
     project = None
 
@@ -205,14 +236,7 @@ class GoogleComputeInstance:
             "onHostMaintenance": "MIGRATE",
             "automaticRestart": True
         },
-        "serviceAccounts": [
-            {
-                "email": "default",
-                "scopes": [
-                    "https://www.googleapis.com/auth/cloud-platform"
-                ]
-            }
-        ]
+        "serviceAccounts": []
     }
 
     def __init__( self, name, project, zone, image, machineType=None ):
@@ -238,6 +262,17 @@ class GoogleComputeInstance:
             self.conf["zone"] + "/diskTypes/pd-standard"
         self.conf["networkInterfaces"][0]["network"] = "projects/" + project \
             + "/global/networks/default",
+
+    def allowIpForward(self, fwd=True):
+        self.conf["canIpForward"] = fwd
+
+    def allowComputeAPI(self, compute=True):
+        if compute is True:
+            self.conf["serviceAccounts"] = [ \
+                {"email":"default","scopes":[self.compScope]} \
+            ]
+        else:
+            self.conf["serviceAccounts"] = [ ]
 
     def addTag(self, tag):
         self.conf["tags"]["items"].append( tag )
@@ -272,22 +307,34 @@ def help():
         action-specific options:
         ------------------------
 
-        createnode
-            --name=<nodename>    Name to give the new node
-            --imageid=<imageid>  The disk image [<project>:]<image>
-            --sizeid=<size>      The machine type to use
+        createnode          Add a node to the cloud
 
-        destroynode
-            --id=<uniqueid>      ID of the node to delete
-            --name=<nodename>    Name of the node to delete
+            --name=<nodename>   Name to give the new node
+            --imageid=<imageid> The disk image [<project>:]<image>
+            --sizeid=<size>     The machine type to use
 
-        status
-            --name=<nodename>    Display the status of the named node only.
-            --google             Show Google API version, not the vTM version.
+        destroynode         Remove a node from the cloud
 
-        authclient
-            --clientid=<id>      The OAuth Client ID for your project
-            --secret=<secret>    The OAuth Client Secret
+            --id=<uniqueid>     ID of the node to delete
+            --name=<nodename>   Name of the node to delete
+
+        status              Get current node status 
+
+            --name=<nodename>   Display the status of the named node only.
+            --google            Show Google API version, not the vTM version.
+
+        authclient          Generate AUTH2 Configuration
+
+            --clientid=<id>     The OAuth Client ID for your project
+            --secret=<secret>   The OAuth Client Secret
+
+        getvtmimgs          Display a list of vTM images available
+
+        createvtm           Deploy a new vTM in your project
+
+            --name=<name>       Name of the vTM
+            --image=<image>     vTM image to use in deployment
+            --script=<script>   Use a startup script 
 
 """
     sys.stderr.write(text)
@@ -386,13 +433,14 @@ def delNode(opts, gcm):
 
     myNode = None
     nodes = gcm.status()
-    for item in nodes["items"]:
-        if "name" in opts.keys() and item["name"] == opts["name"]:
-            myNode = item
-            break
-        elif "id" in opts.keys() and item["id"] == opts["id"]:
-            myNode = item
-            break
+    if "items" in nodes:
+        for item in nodes["items"]:
+            if "name" in opts.keys() and item["name"] == opts["name"]:
+                myNode = item
+                break
+            elif "id" in opts.keys() and item["id"] == opts["id"]:
+                myNode = item
+                break
 
     if myNode is not None:
         gcm.delete(myNode["name"])
@@ -400,6 +448,7 @@ def delNode(opts, gcm):
             [{ "created": 0, "uniq_id": myNode['id'], "status": "destroyed", \
             "complete": "80"}]}}
     else:
+        # should probbaly return a 404???
         opts["id"] = None if "id" not in opts.keys() else opts["id"]
         ret = { "DestroyNodeResponse": { "version": 1, "code": 202, "nodes": \
             [{ "created": 0, "uniq_id": opts['id'], "status": "destroyed", \
@@ -426,6 +475,22 @@ def authMe(opts):
     print("Refresh token: {0}".format(credentials.refresh_token))
 
     print credentials.to_json()
+
+def newVTM(opts,gcm):
+    if "name" not in opts.keys():
+        sys.stderr.write("ERR - You must provide a --name for the vTM\n")
+        sys.exit(1)
+
+    if "script" not in opts.keys():
+        opts['script'] = None
+
+    if "image" in opts.keys():
+        gcm.newVTM(opts['name'], opts['image'], script=opts['script'])
+    else:
+        gcm.newVTM(opts['name'], script=opts['script'])
+
+def listVTMs(opts,gcm):
+    gcm.listVTMs()
 
 # Open and parse the credentials file
 def getCCopts(opts):
@@ -466,7 +531,7 @@ def main():
         if kvp != None:
             opts[kvp.group(1)] = kvp.group(2)
 
-    if action.lower() in ('status','createnode','destroynode'):
+    if action.lower() in ('status','createnode','destroynode','getvtmimgs','createvtm'):
         # We need cloud credentials... 
         if "cloudcreds" in opts.keys():
             getCCopts(opts)
@@ -528,6 +593,10 @@ def main():
         delNode(opts, gcm)
     elif action.lower() == "authclient":
         authMe(opts)
+    elif action.lower() == "getvtmimgs":
+        listVTMs(opts,gcm)
+    elif action.lower() == "createvtm":
+        newVTM(opts,gcm)
     else:
         help()
    
