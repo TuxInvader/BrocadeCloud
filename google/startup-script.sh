@@ -1,6 +1,6 @@
 #!/bin/bash
 
-passwd="thisIsASecret;-)"
+passwd='th1sI$AS3cre+'
 
 # Perform the initial config wizard stuff
 echo 'appliance!licence_agreed   Yes' >> /opt/zeus/zxtm/global.cfg
