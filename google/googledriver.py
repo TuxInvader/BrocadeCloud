@@ -3,8 +3,8 @@
 # Google Compute Engine - Autoscaling Driver and utility for Brocade vTM
 #
 # Name:     googledriver.py
-# Version:  1.0
-# Date:     2016-03-07
+# Version:  1.1
+# Date:     2016-03-15
 #  
 # Copyright 2016 Brocade Communications Systems, Inc.  All rights reserved.
 #
@@ -44,6 +44,8 @@ class GoogleComputeManager:
 
     BROCADE_PROJECT = 'brocade-public-1063'
     BROCADE_VTM = 'vtm-103r1-stm-dev-64'
+    BROCADE_TYPE = 'n1-standard-1'
+    BROCADE_DISK = 16
 
     def __init__(self, project, zone, authFile=None, authState=None):
 
@@ -66,15 +68,21 @@ class GoogleComputeManager:
         self.zone = zone
         self.instUri = self.api + project + "/zones/" + zone + "/instances" 
         
-    def newInst(self, name, image, machineType=None, project=None, zone=None):
+    def newInst(self, name, image, machineType=None, diskSizeGb=None,
+                project=None, zone=None):
         project = self.project if project is None else project
         zone = self.zone if zone is None else zone
-        instance = GoogleComputeInstance(name,project,zone,image,machineType)
+        instance = GoogleComputeInstance(name,project,zone,image,machineType,diskSizeGb)
         self.instances[name] = instance
 
-    def newVTM(self, name, image=BROCADE_VTM, project=BROCADE_PROJECT, 
-                 script=None, solutionKey=None):
-        self.newInst(name, project + ":" + image )
+    def newVTM(self, name, script=None, solutionKey=None, natIP=None, 
+                image=None, project=None, machineType=None, diskSizeGb=None ):
+        image = self.BROCADE_VTM if image is None else image
+        project = self.BROCADE_PROJECT if project is None else project
+        machineType = self.BROCADE_TYPE if machineType is None else machineType
+        diskSizeGb = self.BROCADE_DISK if diskSizeGb is None else diskSizeGb
+
+        self.newInst(name, project + ":" + image, machineType, diskSizeGb )
         self.instances[name].addTags( ["http-server", "https-server", \
                             "tcp-9090-server", "tcp-9070-server", \
                             "google-cloud-marketplace"] )
@@ -88,13 +96,17 @@ class GoogleComputeManager:
                 sf.close()
                 self.instances[name].addScript(script)
 
+        # determine the license name from the requested image
+        license = '-'.join(image.split('-')[2:])
+        license = "stm-dev" if license == "stm-dev-64" else license
         self.instances[name].addMeta("google-cloud-marketplace-solution-key", \
-            "brocade-public-1063:stm-dev")
+            project + ":" + license )
 
         self.instances[name].allowIpForward()
         self.instances[name].allowComputeAPI()
 
-        print "Starting: " + json.dumps(self.instances[name].conf)
+        if natIP is not None:
+            self.instances[name].addNatIP(natIP)
 
         status = self.start(name)
         print status
@@ -190,8 +202,8 @@ class GoogleComputeInstance:
     deployed = False
     name = None
     machineType = "n1-standard-1"
+    diskSizeGb = 10
     imageSrc = None
-    image = "vtm-103-stm-dev-64"
 
     endpoint = "https://www.googleapis.com/compute/v1/projects/"
     compScope = 'https://www.googleapis.com/auth/cloud-platform'
@@ -214,7 +226,7 @@ class GoogleComputeInstance:
                 "initializeParams": {
                     "sourceImage": None,
                     "diskType": None,
-                    "diskSizeGb": "16"
+                    "diskSizeGb": None
                 }
             }
         ],
@@ -239,7 +251,7 @@ class GoogleComputeInstance:
         "serviceAccounts": []
     }
 
-    def __init__( self, name, project, zone, image, machineType=None ):
+    def __init__( self, name, project, zone, image, machineType=None, diskSizeGb=None ):
         self.name = name
         self.project = project
         self.zone = zone
@@ -250,6 +262,7 @@ class GoogleComputeInstance:
             imageSrc = project + "/global/images/"+ image
         imageSrc = self.project if imageSrc is None else imageSrc
         machineType = self.machineType if machineType is None else machineType
+        diskSizeGb = self.diskSizeGb if diskSizeGb is None else diskSizeGb
 
         self.conf["name"] = name
         self.conf["zone"] = "projects/" + project + "/zones/" + zone
@@ -260,6 +273,7 @@ class GoogleComputeInstance:
             + "www.googleapis.com/compute/v1/projects/" + imageSrc
         self.conf["disks"][0]["initializeParams"]["diskType"] = \
             self.conf["zone"] + "/diskTypes/pd-standard"
+        self.conf["disks"][0]["initializeParams"]["diskSizeGb"] = diskSizeGb
         self.conf["networkInterfaces"][0]["network"] = "projects/" + project \
             + "/global/networks/default",
 
@@ -273,6 +287,9 @@ class GoogleComputeInstance:
             ]
         else:
             self.conf["serviceAccounts"] = [ ]
+
+    def addNatIP(self, ip):
+        self.conf["networkInterfaces"][0]["accessConfigs"][0]["natIP"] = ip
 
     def addTag(self, tag):
         self.conf["tags"]["items"].append( tag )
@@ -333,8 +350,10 @@ def help():
         createvtm           Deploy a new vTM in your project
 
             --name=<name>       Name of the vTM
-            --image=<image>     vTM image to use in deployment
+            --imageid=<image>   vTM image from Brocade (don't include project)
             --script=<script>   Use a startup script 
+            --sizeid=<size>     The machine type to use
+            --natip=<address>   Use a reserved NAT IP address
 
 """
     sys.stderr.write(text)
@@ -456,6 +475,18 @@ def delNode(opts, gcm):
 
     print json.dumps(ret)
 
+def newVTM(opts,gcm):
+    if "name" not in opts.keys():
+        sys.stderr.write("ERR - You must provide a --name for the vTM\n")
+        sys.exit(1)
+
+    for key in ( "script", "natip", "imageid", "sizeid" ):
+        if key not in opts.keys():
+            opts[key] = None
+
+    gcm.newVTM(opts['name'], image=opts['imageid'], script=opts['script'],
+        natIP=opts['natip'], machineType=opts['sizeid'])
+
 def authMe(opts):
     from oauth2client.client import OAuth2WebServerFlow
     import logging
@@ -471,23 +502,12 @@ def authMe(opts):
     auth_code = raw_input("Please enter the authorization code: ")
 
     credentials = flow.step2_exchange(code=auth_code)
-    print("Access token:  {0}".format(credentials.access_token))
-    print("Refresh token: {0}".format(credentials.refresh_token))
-
-    print credentials.to_json()
-
-def newVTM(opts,gcm):
-    if "name" not in opts.keys():
-        sys.stderr.write("ERR - You must provide a --name for the vTM\n")
-        sys.exit(1)
-
-    if "script" not in opts.keys():
-        opts['script'] = None
-
-    if "image" in opts.keys():
-        gcm.newVTM(opts['name'], opts['image'], script=opts['script'])
-    else:
-        gcm.newVTM(opts['name'], script=opts['script'])
+    print "\nCopy the following JSON into your Authentication file:\n"
+    gcmConfig  = "\n\t\"token_uri\": \"{0}\",\n\t\"refresh_token\": \"{1}\","
+    gcmConfig += "\n\t\"client_id\": \"{2}\",\n\t\"client_secret\": \"{3}\"\n"
+    print "{"+ gcmConfig.format(credentials.token_uri,
+            credentials.refresh_token, opts['clientid'],
+            opts['secret']) +"}"
 
 def listVTMs(opts,gcm):
     gcm.listVTMs()
