@@ -13,9 +13,9 @@
  - Auto-scaled nodes have no compute API access by default
  - Auto-scaled nodes default disk size is 10Gb
  
-## Sample Scripts
+## Example Scripts
 
-A Cloud Bursting example is included in the samples folder
+A Cloud Bursting example is included in the examples folder
 
 
 
