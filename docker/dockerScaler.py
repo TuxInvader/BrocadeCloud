@@ -91,7 +91,10 @@ def getNodeStatus(filter, value):
             if name != value:
                 continue
 
-        config = client.get( opts["url"] + "/containers/" + id +"/json?all=1" ).json()
+        config = client.get( opts["url"] + "/containers/" + id +"/json?all=1" )
+        if config is None:
+            continue
+        config = config.json()
 
         imageID = server["Image"]
         state = server["Status"]
@@ -139,7 +142,7 @@ def createNode():
     debug( "SENDING -> " + json.dumps(payload) )
 
     try:
-        response = client.post( opts["url"] + "/containers/create", data=json.dumps(payload), headers=headers )
+        response = client.post( opts["url"] + "/containers/create?name=" + opts["name"], data=json.dumps(payload), headers=headers )
     except requests.exceptions.ConnectionError:
         print "Error: Unable to connect to API"
         sys.exit(1)
