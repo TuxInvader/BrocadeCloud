@@ -52,23 +52,39 @@ def getCCopts(opts):
             opts[kvp.group(1)] = kvp.group(2)
     osFH.close()
 
-    if "user" not in opts.keys():
-        sys.stderr.write("ERROR - 'user' must be specified in the Docker config file: " + opts["cred1"] + "\n")
-        sys.exit(1)
-        
     if "apiHost" not in opts.keys():
         sys.stderr.write("ERROR - 'apiHost' must be specified in the Docker config file: " + opts["cred1"] + "\n")
         sys.exit(1)
     else:
         opts["url"] = opts["apiHost"] + "/v1.19"
+
+    if opts["url"].startswith("https://"):
+        if "ca" not in opts.keys():
+            sys.stderr.write("ERROR - 'ca' must be specified when using https in config file: " + opts["cred1"] + "\n")
+            sys.exit(1)
+        if "keys" not in opts.keys():
+            sys.stderr.write("ERROR - 'keys' must be specified when using https in config file: " + opts["cred1"] + "\n")
+            sys.exit(1)
+
+def newSession():
+    client = requests.Session()
+    if opts["url"].startswith("https://"):
+        cas =  opts["ZH"] + "/zxtm/conf/ssl/cas/" + opts["ca"]
+        clientCert = opts["ZH"] + "/zxtm/conf/ssl/client_keys/" + opts["keys"] + ".public"
+        clientKey = opts["ZH"] + "/zxtm/conf/ssl/client_keys/" + opts["keys"] + ".private"
+        debug("Using CA: " + cas)
+        debug("Using Keys: " + clientCert + ", " + clientKey)
+        client.verify=cas   
+        client.cert=(clientCert, clientKey)
+    return client
         
 def getNodeStatus(filter, value):
 
-    client = requests.Session()
+    client = newSession()
     try:
         response = client.get( opts["url"] + "/containers/json?all=1" )
-    except requests.exceptions.ConnectionError:
-        print "Error: Unable to connect to API"
+    except requests.RequestException as err:
+        print "Error: Request Failed: " + str(err)
         sys.exit(1)
 
     debug ( response.text )
@@ -127,7 +143,7 @@ def getStatus():
 
 def createNode():
 
-    client = requests.Session()
+    client = newSession()
     headers = { "Content-Type": "application/json" }
 
     payload = { "HostConfig": json.loads(opts["HostConfig"]), 
@@ -143,8 +159,8 @@ def createNode():
 
     try:
         response = client.post( opts["url"] + "/containers/create?name=" + opts["name"], data=json.dumps(payload), headers=headers )
-    except requests.exceptions.ConnectionError:
-        print "Error: Unable to connect to API"
+    except requests.RequestException as err:
+        print "Error: Request Failed: " + str(err)
         sys.exit(1)
 
     if ( response.status_code != 201 ):
@@ -154,8 +170,8 @@ def createNode():
     created = response.json()
     try:
         response = client.post( opts["url"] + "/containers/" + created["Id"] + "/start" )
-    except requests.exceptions.ConnectionError:
-        print "Error: Unable to connect to API"
+    except requests.RequestException as err:
+        print "Error: Request Failed: " + str(err)
         sys.exit(1)
     
     if ( response.status_code != 204 ):
@@ -190,7 +206,7 @@ def addNode():
 
 def delNode():
     
-    client = requests.Session()
+    client = newSession()
 
     try:
         response = client.post( opts["url"] + "/containers/" + opts["id"] + "/stop?t=5" )
@@ -204,8 +220,8 @@ def delNode():
             json.dump(returnData, sys.stdout )
             sys.exit(1)
 
-    except requests.exceptions.ConnectionError:
-        print "Error: Unable to connect to API"
+    except requests.RequestException as err:
+        print "Error: Request Failed: " + str(err)
         sys.exit(1)
 
     returnData = { "DestroyNodeResponse": { "version": 1, "code": 202, "nodes": 
@@ -258,7 +274,7 @@ for arg in sys.argv:
 # We always need a cloudcreds... Check it here
 if "cloudcreds" in opts.keys():
     getCCopts(opts)
-    debug("CC options parsed. Connecting to " + opts["url"] + " as " + opts["user"])
+    debug("CC options parsed. Connecting to " + opts["url"] )
 else:
     sys.stderr.write("ERROR - You must provide a cloudcreds argument!")
     help()
