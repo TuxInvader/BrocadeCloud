@@ -42,10 +42,10 @@ name of your configuration file as Credential 1.
 
 For Example:
 ```
-    Name:          vcd-vapp1
-    Cloud API:     vclouddriver.py
-    Credential 1:  vcd-vapp1.cfg
-    Credential 2:  Unused, but you must enter something
+Name:          vcd-vapp1
+Cloud API:     vclouddriver.py
+Credential 1:  vcd-vapp1.cfg
+Credential 2:  Unused, but you must enter something
 ```
 
 ## Setting up an AutoScale Pool
@@ -57,7 +57,17 @@ box.
 You should now be at the AutoScaler settings: `Services -> Pools -> [Pool Name] -> AutoScaling`. Set `autoscale!external`
 to "no", and then set `Cloud Credentials` to your new VCD Credentials. The `Image ID` needs to be set to the name of the
 vApp Template that you will be cloning VMs from. You need to enter a value in `Machine Type`, but VCD doesn't use it.
-Finallye set the `Name Prefix` to something appropriate.  
+Finally set the `Name Prefix` to something appropriate.  
+
+For Example:
+```
+autoscale!enabled:     yes
+autoscale!external:    no
+Cloud Credentials:     vcd-vapp1-cc (vclouddriver.py)
+Image ID:              Ubuntu Server 16.04 LTS
+Machine Type:          any
+Name Prefix:           web
+```
 
 Review the other settings, and click `update` when ready.
 
