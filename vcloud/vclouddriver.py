@@ -28,6 +28,7 @@ import re
 import requests
 import time
 import requests
+import json
 from requests.auth import HTTPBasicAuth
 import xml.etree.ElementTree as ET
 from xml.etree.ElementTree import Element
@@ -126,6 +127,7 @@ class VCloudManager(object):
     def _do_get_config(self, name, dictionary):
         if name not in dictionary:
             raise Exception("ERROR: Could not locate configuration for: {}.".format(name))
+        sys.stderr.write("Looking for: {}, Calling: {}\n".format(name, dictionary[name]))
         response = requests.get(dictionary[name], headers=self.headers)
         if response.status_code != 200:
             raise Exception("HTTP Request Failed: {}".format(response.status_code))
@@ -242,18 +244,28 @@ class VCloudManager(object):
 
     def get_network_config(self, network, org=None, vdc=None):
         org, vdc = self._check_args(org, vdc)
-        if self.config is None:
-            raise Exception("ERROR: You must call setupSession() first!")
-        if self.vdcs is None:
+        if vdc not in self.config["VDC"].keys():
             self.get_vdc_config(org,vdc)
         self._get_networks(vdc)
-        if network not in self.networks: 
-            raise Exception("ERROR: Unkown Network: {}".format(network))
-        response = requests.get(self.networks[network], headers=self.headers)
-        if response.status_code != 200:
-            raise Exception("GetNetworkConfig Failed: {}".format(response.text))
-        self.config["NET"][network] = ET.fromstring(response.text)
+        self.config["NET"][network] = self._do_get_config(vdc, self.vdcs)
         return self.config["NET"][network]
+
+    def get_vm_status(self, vapp, vm=None):
+        vms = self.list_vapp_vms(vapp) if vm is None else [ vm ]
+        status = {}
+        for vm in vms:
+            config = self.get_vapp_vm_config(vapp, vm)
+            status[vm] = {"status": config.attrib.get("status"),
+                          "id": config.attrib.get("id"),
+                          "name": config.attrib.get("name"),
+                          "needsCustomization": config.attrib.get("needsCustomization"),
+                          "deployed": config.attrib.get("deployed"),
+                          "nets": {}}
+            net_conns = config.findall('.//{' + self.ns + '}NetworkConnection')
+            for net in net_conns:
+                network = net.attrib.get("network")
+                status[vm]["nets"][network] = net.find('.//{' + self.ns + '}IpAddress').text
+        return status
 
     def get_task_status(self, task):
         uri = task.get("href")
@@ -411,8 +423,221 @@ class RecomposeVAppObject(ElementTree):
     def to_string(self, encoding="utf-8", method="xml"):
         return ET.tostring(self._root, encoding, method)
         
+# Script Functions
+
+def help():
+    text="""
+    Usage: vclouddriver.py [--help] action options
+
+        action: [status|createnode|destroynode|get-vdc-info]
+
+        common options:
+            --verbose=1          Print verbose logging messages to the CLI
+            --cloudcreds=<file>  Zeus config file containing the credentials
+
+        alternatively set credentials manually:
+            --cred1=configfile 
+
+        action-specific options:
+        ------------------------
+
+        createnode                Add a node to the cloud
+
+            --name=<nodename>     Name to give the new node
+            --imageid=<template>  The template to use 
+            --sizeid=<size>       Not used
+
+        destroynode         Remove a node from the cloud
+
+            --id=<uniqueid>     ID of the node to delete
+            --name=<nodename>   Name of the node to delete
+
+        status              Get current node status 
+
+            --name=<nodename>   Display the status of the named node only.
+
+        get-vdc-info          Display a list of resource in your VDC
+
+"""
+    sys.stderr.write(text)
+    sys.exit(1)
+
+def convertNodeData(opts,vcm,item):
+    node = { "uniq_id": item['id'], "name": item["name"],
+        "created": "Sat 22 Oct 18:52:12 GMT 2016",
+        "private_ip": item["nets"][opts["network"]],
+        "public_ip": item["nets"][opts["network"]] }
+
+    status = int(item["status"])
+    if ( status < 4 ):
+        node["status"] = "pending"
+        node["complete"] = 33
+    elif ( status == 4 ):
+        if ( item["deployed"] == "true" ):
+            node["status"] = "active"
+            node["complete"] = 100
+        else:
+            node["status"] = "pending"
+            node["complete"] = 66
+    else:
+        node["status"] = "destroyed"
+        node["complete"] = 100
+    return node
+
+def get_status(opts, vcm):
+    nodes = []
+    if "name" in opts.keys():
+        status = vcm.get_vm_status(opts["vapp"], opts["name"])
+    else:
+        status = vcm.get_vm_status(opts["vapp"])
+
+    for vm in status.keys():
+        node = status[vm]
+        node = convertNodeData(opts,vcm,node)
+        nodes.append(node)
+    return nodes
+
+def add_node(opts, vcm):
+    if "name" not in opts.keys() or "imageid" not in opts.keys():
+        sys.stderr.write("ERR - You must provide --name, and --imageid to create a node\n")
+        sys.exit(1)
+
+    vcm.get_vapp_template_config(opts["imageid"])
+    vcm.get_network_config(opts["network"])
+    status = vcm.add_vm_to_vapp(opts["vapp"], opts["imageid"], opts["network"], opts["name"])
+    nodeStatus = vcm.get_vm_status(opts["vapp"], opts["name"])
+    myNode = convertNodeData(opts, vcm, nodeStatus[opts["name"]])
+    ret = { "CreateNodeResponse":{"version":1, "code":202, "nodes":[ myNode ]}}
+    print json.dumps(ret)
+
+def del_node(opts, vcm):
+    if "name" not in opts.keys() and "id" not in opts.keys():
+        sys.stderr.write("ERR - please provide --name or --id to delete node\n")
+        sys.exit(1)
+
+    myNode = None
+    nodes = get_status(opts, vcm)
+    for node in nodes:
+        if "name" in opts.keys() and node["name"] == opts["name"]:
+            myNode = node
+            break
+        elif "id" in opts.keys() and node["uniq_id"] == opts["id"]:
+            myNode = node
+            break
+
+    if myNode is not None:
+        vcm.del_vm_from_vapp(opts["vapp"], myNode["name"])
+        ret = { "DestroyNodeResponse": { "version": 1, "code": 202, "nodes": \
+            [{ "created": 0, "uniq_id": myNode['uniq_id'], "status": "destroyed", \
+            "complete": "80"}]}}
+    else:
+        # should probbaly return a 404???
+        opts["id"] = None if "id" not in opts.keys() else opts["id"]
+        ret = { "DestroyNodeResponse": { "version": 1, "code": 202, "nodes": \
+            [{ "created": 0, "uniq_id": opts['id'], "status": "destroyed", \
+            "complete": "80"}]}}
+
+    print json.dumps(ret)
+
+def get_cloud_credentials(opts):
+
+    # Find ZeusHome
+    opts["ZH"] = os.environ.get("ZEUSHOME")
+    if opts["ZH"] == None:
+        if os.path.isdir("/usr/local/zeus"):
+            opts["ZH"] = "/usr/local/zeus";
+        elif os.path.isdir("/opt/zeus"):
+            opts["ZH"] = "/opt/zeus";
+        else:
+            sys.stderr.write("ERR - Can not find ZEUSHOME\n")
+            sys.exit(1)
+
+    # Open and parse the credentials file
+    ccFile = opts["ZH"] + "/zxtm/conf/cloudcredentials/" + opts["cloudcreds"]
+    if os.path.exists(ccFile) is False:
+        sys.stderr.write("ERROR - Cloud credentials file does not exist: " + ccFile + "\n")
+        sys.exit(1)
+    ccFH = open( ccFile, "r")
+    for line in ccFH:
+        kvp = re.search("(\w+)\s+(.*)", line.strip() )
+        if kvp != None:
+            opts[kvp.group(1)] = kvp.group(2)
+    ccFH.close()
+
+    # Check credential 1 is the config file
+    if "cred1" in opts.keys():
+        opts["cred1"] = opts["ZH"] + "/zxtm/conf/extra/" + opts["cred1"]
+        if os.path.exists( opts["cred1"] ) is False:
+            sys.stderr.write("ERROR - VCloud config file is missing: " + opts["cred1"] + "\n")
+            sys.exit(1)
+    else:
+        sys.stderr.write("ERROR - Credential 1 must be set to the VCloud config file name\n")
+        sys.exit(1)
+
 def main():
-    pass
+    opts = {"verbose": 0 }
+
+    # Read in the first argument or display the help
+    if len(sys.argv) < 2:
+        help()
+    else:
+        action = sys.argv[1]
+
+    # Process additional arguments
+    for arg in sys.argv:
+        kvp = re.search("--([^=]+)=*(.*)", arg)
+        if kvp != None:
+            opts[kvp.group(1)] = kvp.group(2)
+
+    if "cred1" not in opts.keys():
+        get_cloud_credentials(opts)
+
+    osFH = open( opts["cred1"], "r")
+    for line in osFH:
+        kvp = re.search("(\w+)\s+(.*)", line.strip() )
+        if kvp != None:
+            opts[kvp.group(1)] = kvp.group(2)
+    osFH.close()
+
+    if "apiHost" not in opts.keys():
+        sys.stderr.write("ERROR - 'apiHost' must be specified in the VCD config file: " + opts["cred1"] + "\n")
+        sys.exit(1)
+
+    if "org" not in opts.keys():
+        sys.stderr.write("ERROR - 'org' must be specified in the VCD config file: " + opts["cred1"] + "\n")
+        sys.exit(1)
+
+    if "vdc" not in opts.keys():
+        sys.stderr.write("ERROR - 'vdc' must be specified in the VCD config file: " + opts["cred1"] + "\n")
+        sys.exit(1)
+
+    # Store state in zxtm/internal if being run by vTM
+    if "statefile" not in opts.keys():
+        if "ZH" in opts.keys():
+            opts["statefile"] = opts["ZH"] + "/zxtm/internal/vcd." + \
+                opts["cloudcreds"] + ".state"
+        else:
+            opts["statefile"] = None
+
+    # Set up the VCloudManager
+    vcm = VCloudManager(opts["apiHost"], opts["org"], opts["vdc"])
+    vcm.setup_session(opts["user"], opts["pass"])
+    vcm.get_vapp_config(opts["vapp"])
+
+    # Check the action and call the appropriate function
+    if action.lower() == "help":
+        help()
+    elif action.lower() == "status":
+        nodes = get_status(opts, vcm)
+        print json.dumps({ "NodeStatusResponse":{ "version": 1, "code": 200, "nodes": nodes }})
+    elif action.lower() == "createnode":
+        add_node(opts, vcm)
+    elif action.lower() == "destroynode":
+        del_node(opts, vcm)
+    elif action.lower() == "get-vdc-info":
+        pass
+    else:
+        help()
 
 if __name__ == "__main__":
     main()
