@@ -42,10 +42,10 @@ name of your configuration file as Credential 1.
 
 For Example:
 ```
-    Name:         |vcd-vapp1
-    Cloud API:    |vclouddriver.py
-    Credential 1: |vcd-vapp1.cfg
-    Credential 2: |Unused, but you must enter something
+    Name:          vcd-vapp1
+    Cloud API:     vclouddriver.py
+    Credential 1:  vcd-vapp1.cfg
+    Credential 2:  Unused, but you must enter something
 ```
 
 ## Setting up an AutoScale Pool
