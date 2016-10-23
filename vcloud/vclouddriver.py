@@ -54,11 +54,11 @@ class VCloudManager(object):
         self.config = None
         self.orgs = None
         self.vdcs = None
-        self.vapps = None
-        self.vms = None
-        self.templates = None
-        self.networks = None
-        self.vappNetworks = None
+        self.vapps = {}
+        self.vms = {}
+        self.templates = {}
+        self.dc_networks = {}
+        self.vapp_networks = {}
         self.task = None
         self.timeout = timeout
         self.verbose = verbose
@@ -96,8 +96,6 @@ class VCloudManager(object):
             self.vdcs[vdc.attrib.get("name")] = vdc.attrib.get("href")
 
     def _get_vapps(self, vdc):
-        self.vapps = {}
-        self.templates = {}
         for vapp in self.config["VDC"][vdc].findall(".//{"+ self.ns + "}ResourceEntity"):
             appType = vapp.attrib.get("type")
             if appType == 'application/vnd.vmware.vcloud.vApp+xml':
@@ -106,19 +104,17 @@ class VCloudManager(object):
                 self.templates[vapp.attrib.get("name")] = vapp.attrib.get("href")
 
     def _get_networks(self, vdc):
-        self.networks = {}
         for net in self.config["VDC"][vdc].findall(".//{"+ self.ns + "}Network" +
             "[@type='application/vnd.vmware.vcloud.network+xml']"):
-            self.networks[net.attrib.get("name")] = net.attrib.get("href")
+            self.dc_networks[net.attrib.get("name")] = net.attrib.get("href")
 
     def _get_vapp_networks(self, vapp):
-        self.vappNetworks = {}
         for net in self.config["VAPP"][vapp].findall(".//{" + self.ns + "}NetworkConfig"):
-            link = net.find("./{" + self.ns +"}Link")
-            self.vappNetworks[net.attrib.get("networkName")] = link.attrib.get("href")
+            link = net.find("./{" + self.ns +"}Link").attrib.get("href")
+            link = link[:-13]
+            self.vapp_networks[net.attrib.get("networkName")] = link
 
     def _get_virtual_machines(self, vapp):
-        self.vms = {}
         for v in self.config["VAPP"][vapp].findall(".//{"+ self.ns +"}Vm"):
             self.vms[v.attrib.get("name")] = v.attrib.get("href")
 
@@ -163,41 +159,6 @@ class VCloudManager(object):
     def close_session(self):
         self.headers = None
         self.config = None
-
-    def dump_xml(self, config):
-        for entry in self.config.keys():
-            if config is None or config == entry:
-                print "Dumping {} =================".format(entry)
-                if type(self.config[entry]) is dict:
-                    for item in self.config[entry].keys():
-                        print "Dumping {} - {}".format(entry, item)
-                        ET.dump(self.config[entry][item])
-                else:
-                    ET.dump(self.config[entry])
-
-    def dump_config(self, xml=False, config=None):
-        if self.config is None:
-            raise Exception("ERROR: You must call setupSession() first!")
-
-        if xml:
-            self.dump_xml(config)
-
-        if self.orgs is not None:
-            print "Dumping ORG ================="
-            print "Orgs: {}".format(self.orgs.keys())
-
-        if self.vdcs is not None:
-            print "Dumping VDC ================="
-            print "VDCs: {}".format(self.vdcs.keys())
-
-        if self.vapps is not None:
-            print "Dumping VAPP ================="
-            print "VApps: {}".format(self.vapps.keys())
-            print "Templates: {}".format(self.templates.keys())
-
-        if self.networks is not None:
-            print "Dumping NET ================="
-            print "Nets: {}".format(self.networks.keys())
 
     def list_orgs(self):
         self._check_args("", "")
@@ -263,11 +224,11 @@ class VCloudManager(object):
         if vdc not in self.config["VDC"].keys():
             self.get_vdc_config(org,vdc)
         self._get_networks(vdc)
-        return self.networks
+        return self.dc_networks
 
     def get_network_config(self, network, org=None, vdc=None):
         self.list_networks(org, vdc)
-        self.config["NET"][network] = self._do_get_config(network, self.networks)
+        self.config["NET"][network] = self._do_get_config(network, self.dc_networks)
         return self.config["NET"][network]
 
     def list_vapp_networks(self, vapp, org=None, vdc=None):
@@ -275,7 +236,12 @@ class VCloudManager(object):
         if vapp not in self.config["VAPP"].keys():
             self.get_vapp_config(vapp, org, vdc)
         self._get_vapp_networks(vapp)
-        return self.vappNetworks 
+        return self.vapp_networks 
+
+    def get_vapp_network_config(self, vapp, network, org=None, vdc=None):
+        self.list_vapp_networks(vapp)
+        self.config["NET"][network] = self._do_get_config(network, self.vapp_networks)
+        return self.config["NET"][network]
 
     def get_vm_status(self, vapp, vm=None):
         vms = self.list_vapp_vms(vapp) if vm is None else [ vm ]
@@ -336,10 +302,10 @@ class VCloudManager(object):
     def add_vm_to_vapp(self, vapp, template, network, vm):
         if template not in self.templates.keys():
             raise Exception("Template has not been discovered: {}".format(template))
-        if network not in self.networks.keys():
+        if network not in self.vapp_networks.keys():
             raise Exception("Network has not been discovered: {}".format(network))
         rvo = RecomposeVAppObject(self.ns, self.customize)
-        rvo.add_vm_to_vapp(network, self.networks[network], vm, template, self.config)
+        rvo.add_vm_to_vapp(network, self.vapp_networks[network], vm, template, self.config)
         xml = rvo.to_string()
         uri = self.vapps[vapp] + "/action/recomposeVApp"
         ct = "application/vnd.vmware.vcloud.recomposeVAppParams+xml"
@@ -523,7 +489,7 @@ def add_node(opts, vcm):
         sys.exit(1)
 
     vcm.get_vapp_template_config(opts["imageid"])
-    vcm.get_network_config(opts["network"])
+    vcm.get_vapp_network_config(opts['vapp'], opts["network"])
     status = vcm.add_vm_to_vapp(opts["vapp"], opts["imageid"], opts["network"], opts["name"])
     nodeStatus = vcm.get_vm_status(opts["vapp"], opts["name"])
     myNode = convertNodeData(opts, vcm, nodeStatus[opts["name"]])
@@ -576,6 +542,7 @@ def get_vdc_info(opts, vcm):
     to_print["Virtual DCs"] = vcm.list_vdcs()
     to_print["Virtual DC Networks"] = vcm.list_networks()
     to_print["Virtual Apps"] = vcm.list_vapps()
+    to_print["Virtual App Networks"] = vcm.list_vapp_networks(opts["vapp"])
     to_print["Virtual AppTemplates"] = vcm.list_vapp_templates()
 
     print_table(to_print)
