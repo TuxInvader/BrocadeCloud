@@ -61,6 +61,7 @@ class VCloudManager(object):
         self.task = None
         self.timeout = timeout
         self.verbose = verbose
+        self.customize = False
         self.terminate_on_shutdown = True
         self._setup_name_space()
 
@@ -148,6 +149,9 @@ class VCloudManager(object):
         self.headers['x-vcloud-authorization'] = response.headers['x-vcloud-authorization']
         self.config = { "Session": ET.fromstring(response.text), "ORG": {}, "NET": {},
             "VDC": {}, "VAPP": {}, "TMPL": {}, "VMS": {} }
+
+    def enable_customization(self, customize):
+        self.customize = customize
 
     def close_session(self):
         self.headers = None
@@ -316,7 +320,7 @@ class VCloudManager(object):
             raise Exception("Template has not been discovered: {}".format(template))
         if network not in self.networks.keys():
             raise Exception("Network has not been discovered: {}".format(network))
-        rvo = RecomposeVAppObject(self.ns)
+        rvo = RecomposeVAppObject(self.ns, self.customize)
         rvo.add_vm_to_vapp(network, self.networks[network], vm, template, self.config)
         xml = rvo.to_string()
         uri = self.vapps[vapp] + "/action/recomposeVApp"
@@ -370,11 +374,12 @@ class VCloudManager(object):
 
 class RecomposeVAppObject(ElementTree):
 
-    def __init__(self, ns, text="Recompose VApp"):
+    def __init__(self, ns, customize=False, text="Recompose VApp"):
 
         root = Element("RecomposeVAppParams")
         super(RecomposeVAppObject, self).__init__(root)    
         self.ns = ns
+        self.customize = customize
         desc = Element("Description")
         desc.text = text
         root.append(desc)
@@ -415,6 +420,12 @@ class RecomposeVAppObject(ElementTree):
         netConfig.find(".//{" + self.ns + "}NetworkConnection").set("network", netName)
         instParams.append(netConfig)
         sourcedItem.append(source)
+        if self.customize:
+            vgp = Element("VmGeneralParams")
+            nc = Element("NeedsCustomization")
+            nc.text = "true"
+            vgp.append(nc)
+            sourcedItem.append(vgp)
         sourcedItem.append(instParams)
         self._root.append(sourcedItem)
 
@@ -485,7 +496,7 @@ def convertNodeData(opts,vcm,item):
         node["status"] = "pending"
         node["complete"] = 33
     elif ( status == 4 ):
-        if ( item["deployed"] == "true" ):
+        if ( item["deployed"] == "true" && item["needsCustomization"] == "false" ):
             node["status"] = "active"
             node["complete"] = 100
         else:
@@ -644,6 +655,12 @@ def setup(opts):
     vcm = VCloudManager(opts["apiHost"], opts["org"], opts["vdc"], opts["verbose"])
     vcm.setup_session(opts["user"], opts["pass"])
     vcm.get_vapp_config(opts["vapp"])
+
+    if "customize" in opts.keys():
+        if opts["customize"].lower() == "true":
+            vcm.enable_customization(True)
+        else:
+            vcm.enable_customization(False)
 
     return vcm
 

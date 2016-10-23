@@ -21,18 +21,22 @@ not neet to be executable. You will need a configuration file for each vAPP you 
 For Example::  
 
 ```
-apiHost  https://mycloud.mycompany.net/api
-user     mark@brocade
-pass     marksPassword
-org      brocade
-vdc      brocade-emea
-vapp     testapp
-network  Direct Internet connection
+apiHost   https://mycloud.mycompany.net/api
+user      mark@brocade
+pass      marksPassword
+org       brocade
+vdc       brocade-emea
+vapp      testapp
+network   Direct Internet connection
+customize true
 ```
 
 You should set the `apiHost, user, and pass` to match the VCD API you will be connecting to. The `org, and vdc`
 should match your VCloud Organization, and Virtual Data Center names. The `vapp` is the name of the VApp which
-we will be deploying machines into, and the `network` is the name of the network we will deploy on.
+we will be deploying machines into, and the `network` is the name of the network we will deploy on.  
+
+VCD will run Guest Customization if your template requires them, but if you want to explicitly request them, 
+then you can set the optional `customize` parameter to `true` 
 
 ### Create Cloud Credentials
 
