@@ -37,7 +37,7 @@ from xml.etree.ElementTree import ElementTree
 
 class VCloudManager(object):
 
-    def __init__(self, api, org=None, vdc=None, timeout=60):
+    def __init__(self, api, org=None, vdc=None, verbose=0, timeout=60):
 
         NAME_SPACE = "http://www.vmware.com/vcloud/v1.5"
         XML_VERSION = "application/*+xml;version=5.1"
@@ -60,8 +60,13 @@ class VCloudManager(object):
         self.networks = None
         self.task = None
         self.timeout = timeout
+        self.verbose = verbose
         self.terminate_on_shutdown = True
         self._setup_name_space()
+
+    def _debug(self, msg):
+        if self.verbose:
+            sys.stderr.write("DEBUG: {}".format(msg))
 
     def _setup_name_space(self):
         ET.register_namespace("", self.ns)
@@ -127,7 +132,7 @@ class VCloudManager(object):
     def _do_get_config(self, name, dictionary):
         if name not in dictionary:
             raise Exception("ERROR: Could not locate configuration for: {}.".format(name))
-        sys.stderr.write("Looking for: {}, Calling: {}\n".format(name, dictionary[name]))
+        self._debug("HTTP GET for: {}, Calling: {}\n".format(name, dictionary[name]))
         response = requests.get(dictionary[name], headers=self.headers)
         if response.status_code != 200:
             raise Exception("HTTP Request Failed: {}".format(response.status_code))
@@ -271,8 +276,8 @@ class VCloudManager(object):
         uri = task.get("href")
         response = requests.get(uri, headers=self.headers)
         if response.status_code != 200:
-            sys.stderr.write("CODE: {}\n".format(response.status_code))
-            sys.stderr.write("DATA: {}\n".format(response.text))
+            self._debug("CODE: {}\n".format(response.status_code))
+            self._debug("DATA: {}\n".format(response.text))
             raise Exception("Failed to get task. Code: {},".format(response.status_code) +
                 " Data: {}".format(response.text))
         return ET.fromstring(response.text)
@@ -281,7 +286,7 @@ class VCloudManager(object):
         start = time.time()
         status = task.get("status")
         while status == "running":
-            sys.stderr.write(".")
+            self._debug(".")
             if time.time() - start > self.timeout:
                 return "running"
             time.sleep(5)
@@ -295,15 +300,15 @@ class VCloudManager(object):
             headers["Content-Type"] = ct
         response = requests.post(uri, headers=headers, data=data)
         if response.status_code != 202:
-            sys.stderr.write("POST: {}\n".format(uri))
-            sys.stderr.write("Headers: {}\n".format(headers))
-            sys.stderr.write("DATA: {}\n".format(data))
+            self._debug("POST: {}\n".format(uri))
+            self._debug("Headers: {}\n".format(headers))
+            self._debug("DATA: {}\n".format(data))
             raise Exception("ERROR: Task submission failed. Code: {},".format(response.status_code) +
                 " Data: {}".format(response.text))
-        sys.stderr.write("{} Running.".format(name))
+        self._debug("{} Running.".format(name))
         task = ET.fromstring(response.text)
         status = self.wait_for_task(task)
-        sys.stderr.write("{} Completion Status: {}\n".format(name, status))
+        self._debug("{} Completion Status: {}\n".format(name, status))
         return status
 
     def add_vm_to_vapp(self, vapp, template, network, vm):
@@ -506,7 +511,7 @@ def get_status(opts, vcm):
 
 def add_node(opts, vcm):
     if "name" not in opts.keys() or "imageid" not in opts.keys():
-        sys.stderr.write("ERR - You must provide --name, and --imageid to create a node\n")
+        sys.stderr.write("ERROR - You must provide --name, and --imageid to create a node\n")
         sys.exit(1)
 
     vcm.get_vapp_template_config(opts["imageid"])
@@ -519,7 +524,7 @@ def add_node(opts, vcm):
 
 def del_node(opts, vcm):
     if "name" not in opts.keys() and "id" not in opts.keys():
-        sys.stderr.write("ERR - please provide --name or --id to delete node\n")
+        sys.stderr.write("ERROR - please provide --name or --id to delete node\n")
         sys.exit(1)
 
     myNode = None
@@ -576,7 +581,7 @@ def get_cloud_credentials(opts):
         elif os.path.isdir("/opt/zeus"):
             opts["ZH"] = "/opt/zeus";
         else:
-            sys.stderr.write("ERR - Can not find ZEUSHOME\n")
+            sys.stderr.write("ERROR - Can not find ZEUSHOME\n")
             sys.exit(1)
 
     # Open and parse the credentials file
@@ -636,14 +641,14 @@ def setup(opts):
             opts["statefile"] = None
 
     # Set up the VCloudManager
-    vcm = VCloudManager(opts["apiHost"], opts["org"], opts["vdc"])
+    vcm = VCloudManager(opts["apiHost"], opts["org"], opts["vdc"], opts["verbose"])
     vcm.setup_session(opts["user"], opts["pass"])
     vcm.get_vapp_config(opts["vapp"])
 
     return vcm
 
 def main():
-    opts = {"verbose": 0 }
+    opts = {"verbose": False }
 
     # Read in the first argument or display the help
     if len(sys.argv) < 2:
