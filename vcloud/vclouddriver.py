@@ -251,11 +251,15 @@ class VCloudManager(object):
         self.config["VMS"][vm] = self._do_get_config(vm,self.vms)
         return self.config["VMS"][vm]
 
-    def get_network_config(self, network, org=None, vdc=None):
+    def list_networks(self, org=None, vdc=None):
         org, vdc = self._check_args(org, vdc)
         if vdc not in self.config["VDC"].keys():
             self.get_vdc_config(org,vdc)
         self._get_networks(vdc)
+        return self.networks
+
+    def get_network_config(self, network, org=None, vdc=None):
+        self.list_networks(org, vdc)
         self.config["NET"][network] = self._do_get_config(vdc, self.vdcs)
         return self.config["NET"][network]
 
@@ -556,6 +560,7 @@ def get_vdc_info(opts, vcm):
     to_print = {}
     to_print["Organizations"] = vcm.list_orgs()
     to_print["Virtual DCs"] = vcm.list_vdcs()
+    to_print["Virtual DC Networks"] = vcm.list_networks()
     to_print["Virtual Apps"] = vcm.list_vapps()
     to_print["Virtual Apps Templates"] = vcm.list_vapp_templates()
 
