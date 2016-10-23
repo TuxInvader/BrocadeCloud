@@ -390,27 +390,6 @@ class RecomposeVAppObject(ElementTree):
         if template not in config["TMPL"].keys():
             raise Exception("Template has not been discovered: {}".format(template))
 
-        # Configure the Network
-        #instParams = Element("InstantiationParams")
-        #netConfSection = Element("NetworkConfigSection")
-        #ovfInfo = Element("ovf:Info", msgid="")
-        #ovfInfo.text = "Configuration parameters for logical networks"
-        #netConfig = Element("NetworkConfig", networkName=netName)
-        #configuration = Element("Configuration")
-        #ipScope = config["NET"][netName].find(".//{" + self.ns + "}IpScope" )
-        ##fenceMode = config["NET"][netName].find(".//{" + self.ns + "}FenceMode" )
-        #RNIAD = config["NET"][netName].find(".//{" + self.ns + "}RetainNetInfoAcrossDeployments" )
-        #parentNet = Element("ParentNetwork", href=netLink, type="application/vnd.vmware.vcloud.orgNetwork+xml", name=netName )
-        ##configuration.append(ipScope)
-        #configuration.append(parentNet)
-        #configuration.append(fenceMode)
-        #configuration.append(RNIAD)
-        #netConfig.append(configuration)
-        #netConfSection.append(ovfInfo)
-        #netConfSection.append(netConfig)
-        #instParams.append(netConfSection)
-        #self._root.append(instParams)
-
         # Configure the Template
         sourcedItem = Element("SourcedItem")
         vm = config["TMPL"][template].find(".//{" + self.ns + "}Vm")
@@ -496,7 +475,7 @@ def convertNodeData(opts,vcm,item):
         node["status"] = "pending"
         node["complete"] = 33
     elif ( status == 4 ):
-        if ( item["deployed"] == "true" && item["needsCustomization"] == "false" ):
+        if ( item["deployed"] == "true" and item["needsCustomization"] == "false" ):
             node["status"] = "active"
             node["complete"] = 100
         else:
