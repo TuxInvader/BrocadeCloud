@@ -438,6 +438,13 @@ def help():
         alternatively set credentials manually:
             --cred1=configfile 
 
+        configuration file:
+        -------------------
+
+        The config file should include: apiHost, user, pass, org, vdc, vapp,
+        and network. You may also override these by passing them on the
+        command line. Eg: --apiHost or --vdc
+
         action-specific options:
         ------------------------
 
@@ -539,6 +546,26 @@ def del_node(opts, vcm):
 
     print json.dumps(ret)
 
+def print_table(dictionary, spacing=3):
+    for key in dictionary.keys():
+        print "\n{}\n{}".format(key,"-"*len(key))
+        ml = 0
+        for item in dictionary[key].keys():
+            ml = len(item) if len(item) > ml else ml
+        for item in dictionary[key].keys():
+            sp = ml - len(item) + spacing
+            print "{}{}:{}".format(item, " "*sp, dictionary[key][item])
+        print ""
+
+def get_vdc_info(opts, vcm):
+    to_print = {}
+    to_print["Organizations"] = vcm.list_orgs()
+    to_print["Virtual DCs"] = vcm.list_vdcs()
+    to_print["Virtual Apps"] = vcm.list_vapps()
+    to_print["Virtual Apps Templates"] = vcm.list_vapp_templates()
+
+    print_table(to_print)
+
 def get_cloud_credentials(opts):
 
     # Find ZeusHome
@@ -574,20 +601,7 @@ def get_cloud_credentials(opts):
         sys.stderr.write("ERROR - Credential 1 must be set to the VCloud config file name\n")
         sys.exit(1)
 
-def main():
-    opts = {"verbose": 0 }
-
-    # Read in the first argument or display the help
-    if len(sys.argv) < 2:
-        help()
-    else:
-        action = sys.argv[1]
-
-    # Process additional arguments
-    for arg in sys.argv:
-        kvp = re.search("--([^=]+)=*(.*)", arg)
-        if kvp != None:
-            opts[kvp.group(1)] = kvp.group(2)
+def setup(opts):
 
     if "cred1" not in opts.keys():
         get_cloud_credentials(opts)
@@ -596,7 +610,9 @@ def main():
     for line in osFH:
         kvp = re.search("(\w+)\s+(.*)", line.strip() )
         if kvp != None:
-            opts[kvp.group(1)] = kvp.group(2)
+            # command line args take precedence
+            if kvp.group(1) not in opts.keys():
+                opts[kvp.group(1)] = kvp.group(2)
     osFH.close()
 
     if "apiHost" not in opts.keys():
@@ -624,18 +640,39 @@ def main():
     vcm.setup_session(opts["user"], opts["pass"])
     vcm.get_vapp_config(opts["vapp"])
 
+    return vcm
+
+def main():
+    opts = {"verbose": 0 }
+
+    # Read in the first argument or display the help
+    if len(sys.argv) < 2:
+        help()
+    else:
+        action = sys.argv[1]
+
+    # Process additional arguments
+    for arg in sys.argv:
+        kvp = re.search("--([^=]+)=*(.*)", arg)
+        if kvp != None:
+            opts[kvp.group(1)] = kvp.group(2)
+
     # Check the action and call the appropriate function
     if action.lower() == "help":
         help()
     elif action.lower() == "status":
+        vcm = setup(opts)
         nodes = get_status(opts, vcm)
         print json.dumps({ "NodeStatusResponse":{ "version": 1, "code": 200, "nodes": nodes }})
     elif action.lower() == "createnode":
+        vcm = setup(opts)
         add_node(opts, vcm)
     elif action.lower() == "destroynode":
+        vcm = setup(opts)
         del_node(opts, vcm)
     elif action.lower() == "get-vdc-info":
-        pass
+        vcm = setup(opts)
+        get_vdc_info(opts, vcm)
     else:
         help()
 
