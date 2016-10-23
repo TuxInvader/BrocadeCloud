@@ -286,7 +286,7 @@ class VCloudManager(object):
         start = time.time()
         status = task.get("status")
         while status == "running":
-            self._debug(".")
+            self._debug("waiting for task: {:0>2.2f}\n".format(time.time() - start))
             if time.time() - start > self.timeout:
                 return "running"
             time.sleep(5)
@@ -305,7 +305,7 @@ class VCloudManager(object):
             self._debug("DATA: {}\n".format(data))
             raise Exception("ERROR: Task submission failed. Code: {},".format(response.status_code) +
                 " Data: {}".format(response.text))
-        self._debug("{} Running.".format(name))
+        self._debug("{} Running.\n".format(name))
         task = ET.fromstring(response.text)
         status = self.wait_for_task(task)
         self._debug("{} Completion Status: {}\n".format(name, status))
