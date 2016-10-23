@@ -549,7 +549,7 @@ def print_table(dictionary, spacing=3):
             ml = len(item) if len(item) > ml else ml
         for item in dictionary[key].keys():
             sp = ml - len(item) + spacing
-            print "{}{}:{}".format(item, " "*sp, dictionary[key][item])
+            print "{}{}| {}".format(item, " "*sp, dictionary[key][item])
         print ""
 
 def get_vdc_info(opts, vcm):
