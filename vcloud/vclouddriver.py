@@ -58,6 +58,7 @@ class VCloudManager(object):
         self.vms = None
         self.templates = None
         self.networks = None
+        self.vappNetworks = None
         self.task = None
         self.timeout = timeout
         self.verbose = verbose
@@ -109,6 +110,12 @@ class VCloudManager(object):
         for net in self.config["VDC"][vdc].findall(".//{"+ self.ns + "}Network" +
             "[@type='application/vnd.vmware.vcloud.network+xml']"):
             self.networks[net.attrib.get("name")] = net.attrib.get("href")
+
+    def _get_vapp_networks(self, vapp):
+        self.vappNetworks = {}
+        for net in self.config["VAPP"][vapp].findall(".//{" + self.ns + "}NetworkConfig"):
+            link = net.find("./{" + self.ns +"}Link")
+            self.vappNetworks[net.attrib.get("networkName")] = link.attrib.get("href")
 
     def _get_virtual_machines(self, vapp):
         self.vms = {}
@@ -260,8 +267,15 @@ class VCloudManager(object):
 
     def get_network_config(self, network, org=None, vdc=None):
         self.list_networks(org, vdc)
-        self.config["NET"][network] = self._do_get_config(vdc, self.vdcs)
+        self.config["NET"][network] = self._do_get_config(network, self.networks)
         return self.config["NET"][network]
+
+    def list_vapp_networks(self, vapp, org=None, vdc=None):
+        org, vdc = self._check_args(org, vdc)
+        if vapp not in self.config["VAPP"].keys():
+            self.get_vapp_config(vapp, org, vdc)
+        self._get_vapp_networks(vapp)
+        return self.vappNetworks 
 
     def get_vm_status(self, vapp, vm=None):
         vms = self.list_vapp_vms(vapp) if vm is None else [ vm ]
@@ -562,7 +576,7 @@ def get_vdc_info(opts, vcm):
     to_print["Virtual DCs"] = vcm.list_vdcs()
     to_print["Virtual DC Networks"] = vcm.list_networks()
     to_print["Virtual Apps"] = vcm.list_vapps()
-    to_print["Virtual Apps Templates"] = vcm.list_vapp_templates()
+    to_print["Virtual AppTemplates"] = vcm.list_vapp_templates()
 
     print_table(to_print)
 
