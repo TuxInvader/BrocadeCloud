@@ -202,6 +202,11 @@ class VCloudManager(object):
         self.config["VAPP"][vapp] = self._do_get_config(vapp, self.vapps)
         return self.config["VAPP"][vapp]
 
+    def get_vapp_metadata(self, vapp, org=None, vdc=None):
+        self.list_vapps(org, vdc)
+        self.config["META"][vapp] = self._do_get_config(vapp, self.vapps, "/metadata")
+        return self.config["META"][vapp]
+
     def get_vapp_template_config(self, vapp, org=None, vdc=None):
         self.list_vapps(org, vdc)
         self.config["TMPL"][vapp] = self._do_get_config(vapp, self.templates)
@@ -569,7 +574,7 @@ def convertNodeData(opts,vcm,item):
         if item["deployed"] == "true":
             node["satus"] = "pending"
             node["complete"] = 66
-        else
+        else:
             node["status"] = "destroyed"
             node["complete"] = 100
     return node
