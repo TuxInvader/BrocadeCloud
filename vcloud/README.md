@@ -41,9 +41,9 @@ we will be deploying machines into, and the `network` is the name of the network
 VCD will run Guest Customization if your template requires them, but if you want to explicitly request them, 
 then you can set the optional `customize` parameter to `true` 
 
-You must provide at least one network. This can be any combination of pubNet, privNet and networks. The pubNet
-and privNet options should contain a single named network, while the networks option can be a comma separated
-list. Obviously the named networks must exist in your VApp.  
+You must provide at least one network. This can be any combination of `pubNet`, `privNet` and `networks`. 
+The `pubNet` and `privNet` options should contain a single named network, while the `networks` option can be a
+comma separated list. Obviously the named networks must exist in your VApp.  
 
 The `ipMode` setting should be either `POOL` or `DHCP` to match the IP Allocation method you are using.  
 
