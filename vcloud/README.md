@@ -27,7 +27,9 @@ pass      marksPassword
 org       brocade
 vdc       brocade-emea
 vapp      testapp
-network   Direct Internet connection
+pubNet    Direct Internet connection
+privNet   private_network_1
+networks  private_network_2, private_network_3, private_network_4
 customize true
 ```
 
@@ -37,6 +39,10 @@ we will be deploying machines into, and the `network` is the name of the network
 
 VCD will run Guest Customization if your template requires them, but if you want to explicitly request them, 
 then you can set the optional `customize` parameter to `true` 
+
+You must provide at least one network. This can be any combination of pubNet, privNet and networks. The pubNet
+and privNet options should contain a single named network, while networks option can be a comma separetd list.
+Obviously the named networks must exist in your VApp.  
 
 ### Create Cloud Credentials
 
