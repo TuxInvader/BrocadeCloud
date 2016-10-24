@@ -37,7 +37,7 @@ from xml.etree.ElementTree import ElementTree
 
 class VCloudManager(object):
 
-    def __init__(self, api, org=None, vdc=None, verbose=0, timeout=60):
+    def __init__(self, api, org=None, vdc=None, verbose=False, timeout=60):
 
         NAME_SPACE = "http://www.vmware.com/vcloud/v1.5"
         XML_VERSION = "application/*+xml;version=5.1"
@@ -257,7 +257,11 @@ class VCloudManager(object):
             net_conns = config.findall('.//{' + self.ns + '}NetworkConnection')
             for net in net_conns:
                 network = net.attrib.get("network")
-                status[vm]["nets"][network] = net.find('.//{' + self.ns + '}IpAddress').text
+                ip = net.find('.//{' + self.ns + '}IpAddress')
+                if ip is None:
+                    status[vm]["nets"][network] = ""
+                else:
+                    status[vm]["nets"][network] = ip.text
         return status
 
     def get_task_status(self, task):
@@ -362,7 +366,6 @@ class VCloudManager(object):
                 return "success"
             else:
                 raise e
-            
         return status
 
 
@@ -483,20 +486,33 @@ def help():
 def convertNodeData(opts,vcm,item):
     networks = get_net_list(opts)
     node = { "uniq_id": item['id'], "name": item["name"],
-        "created": "Sat 22 Oct 18:52:12 GMT 2016",
-        "public_ip": item["nets"][networks[0]]}
+        "created": "Sat 22 Oct 18:52:12 GMT 2016"}
 
-    if len(networks) >= 2 and networks[1] in item["nets"].keys():
-        node["private_ip"] = item["nets"][networks[1]]
-    else:
+    if len(networks) == 1:
+        node["public_ip"] = item["nets"][networks[0]]
         node["private_ip"] = item["nets"][networks[0]]
+    else:
+        if "pubNet" in opts.keys() and opts["pubNet"] in item["nets"].keys():
+            node["public_ip"] = item["nets"][opts["pubNet"]]
+
+        if "privNet" in opts.keys() and opts["privNet"] in item["nets"].keys():
+            node["private_ip"] = item["nets"][opts["privNet"]]
+
+        if "public_ip" not in node.keys():
+            node["public_ip"] = item["nets"][networks[0]]
+
+        if "private_ip" not in node.keys():
+            node["private_ip"] = item["nets"][networks[1]]
 
     status = int(item["status"])
-    if ( status < 4 ):
+    if status < 4:
         node["status"] = "pending"
         node["complete"] = 33
-    elif ( status == 4 ):
-        if ( item["deployed"] == "true" and item["needsCustomization"] == "false" ):
+    elif status == 4:
+        if node["public_ip"] == "" or node["private_ip"] == "":
+            node["status"] = "pending"
+            node["complete"] = 66
+        elif item["deployed"] == "true":
             node["status"] = "active"
             node["complete"] = 100
         else:
@@ -706,7 +722,7 @@ def setup(opts):
     return vcm
 
 def main():
-    opts = {"verbose": False }
+    opts = {}
 
     # Read in the first argument or display the help
     if len(sys.argv) < 2:
@@ -722,6 +738,8 @@ def main():
 
     if "verbose" in opts.keys():
         opts["verbose"] = True
+    else:
+        opts["verbose"] = False
 
     # Check the action and call the appropriate function
     if action.lower() == "help":
