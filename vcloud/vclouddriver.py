@@ -425,13 +425,7 @@ class RecomposeVAppObject(object):
         delItem = Element("{" + self.ns + "}DeleteItem", href=nodeLink)
         self._root.append(delItem)
 
-    def fix_up_name_space(self):
-        #self._root.set("xmlns", self.ns)
-        #self._root.set("xmlns:ovf", "http://schemas.dmtf.org/ovf/envelope/1")
-        print self._root.items()
-
     def to_string(self, encoding="utf-8", method="xml"):
-        self.fix_up_name_space()
         return ET.tostring(self._root, encoding, method)
         
 # Script Functions
@@ -547,8 +541,7 @@ def add_node(opts, vcm):
 
     vcm.get_vapp_template_config(opts["imageid"])
     networks = get_net_list(opts)
-    for net in networks:
-        vcm.get_vapp_network_config(opts['vapp'], net)
+    vcm.list_vapp_networks(opts['vapp'])
     status = vcm.add_vm_to_vapp(opts["vapp"], opts["imageid"], networks, opts["ipMode"], opts["name"])
     nodeStatus = vcm.get_vm_status(opts["vapp"], opts["name"])
     myNode = convertNodeData(opts, vcm, nodeStatus[opts["name"]])
