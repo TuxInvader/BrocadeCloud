@@ -133,11 +133,11 @@ class VCloudManager(object):
                 vdc = self.vdc
         return [ org, vdc ]
 
-    def _do_get_config(self, name, dictionary):
+    def _do_get_config(self, name, dictionary, append=""):
         if name not in dictionary:
             raise Exception("ERROR: Could not locate configuration for: {}.".format(name))
-        self._debug("HTTP GET for: {}, Calling: {}\n".format(name, dictionary[name]))
-        response = requests.get(dictionary[name], headers=self.headers)
+        self._debug("HTTP GET for: {}, Calling: {}\n".format(name, dictionary[name] + append))
+        response = requests.get(dictionary[name] + append, headers=self.headers)
         if response.status_code != 200:
             raise Exception("HTTP Request Failed: {}".format(response.status_code))
         return ET.fromstring(response.text)
@@ -151,7 +151,7 @@ class VCloudManager(object):
             raise Exception("Authentication Failed: {}".format(response.status_code))
         self.headers['x-vcloud-authorization'] = response.headers['x-vcloud-authorization']
         self.config = { "Session": ET.fromstring(response.text), "ORG": {}, "NET": {},
-            "VDC": {}, "VAPP": {}, "TMPL": {}, "VMS": {} }
+            "VDC": {}, "VAPP": {}, "TMPL": {}, "VMS": {}, "META": {} }
 
     def enable_customization(self, customize):
         self.customize = customize
@@ -218,6 +218,53 @@ class VCloudManager(object):
         self.list_vapp_vms(vapp, org, vdc)
         self.config["VMS"][vm] = self._do_get_config(vm,self.vms)
         return self.config["VMS"][vm]
+
+    def get_vapp_vm_metadata(self, vapp, vm, org=None, vdc=None):
+        self.list_vapp_vms(vapp, org, vdc)
+        self.config["META"][vm] = self._do_get_config(vm, self.vms, "/metadata")
+        return self.config["META"][vm]
+
+    def add_vapp_vm_metadata(self, vapp, vm, key, value, mdType=None, org=None, vdc=None):
+        self.list_vapp_vms(vapp, org, vdc)
+        if vm not in self.vms:
+            raise Exception("Error: No such VM: {}".format(vm))
+        xsi = "http://www.w3.org/2001/XMLSchema-instance"
+        metadata = Element("{" + self.ns + "}Metadata")
+        mde = Element("MetadataEntry")
+        mKey = Element("Key")
+        mKey.text = key
+        mde.append(mKey)
+        mVal = Element("Value")
+        mVal.text = value
+        if mdType is not None:
+            typedVal = Element("TypedValue")
+            typedVal.set("{" + xsi + "}type", mdType) 
+            typedVal.append(mVal)
+            mde.append(typedVal)
+        else:
+            mde.append(mVal)
+        metadata.append(mde) 
+        uri = self.vms[vm] + "/metadata"
+        success = self.submit_task(uri, name="Set Metadata", 
+            ct="application/vnd.vmware.vcloud.metadata+xml",
+            data=ET.tostring(metadata))
+        return success
+
+    def set_vapp_vm_creation_time(self, vapp, vm, org=None, vdc=None):
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        status = self.add_vapp_vm_metadata(vapp, vm, "created", stamp, "MetadataDateTimeValue")
+        return status
+
+    def get_vapp_vm_creation_time(self, vapp, vm, org=None, vdc=None):
+        md = self.get_vapp_vm_metadata(vapp, vm, org, vdc)
+        kvps = md.findall("{" + self.ns + "}MetadataEntry")
+        for kvp in kvps:
+            key = kvp.find("{" + self.ns + "}Key")
+            if key is not None and key.text == "created":
+                value = kvp.find(".//{" + self.ns + "}Value")
+                if value is not None:
+                    return value.text
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(0))
 
     def list_networks(self, org=None, vdc=None):
         org, vdc = self._check_args(org, vdc)
@@ -320,6 +367,7 @@ class VCloudManager(object):
             self.get_vapp_config(vapp)
             self.list_vapp_vms(vapp)
             if vm in self.vms:
+                status = self.set_vapp_vm_creation_time(vapp, vm, org=None, vdc=None)
                 status = self.poweron(vm)
         return status
 
@@ -485,8 +533,7 @@ def help():
 
 def convertNodeData(opts,vcm,item):
     networks = get_net_list(opts)
-    node = { "uniq_id": item['id'], "name": item["name"],
-        "created": "Sat 22 Oct 18:52:12 GMT 2016"}
+    node = { "uniq_id": item['id'], "name": item["name"], "sizeid": opts["sizeid"] }
 
     if len(networks) == 1:
         node["public_ip"] = item["nets"][networks[0]]
@@ -519,8 +566,12 @@ def convertNodeData(opts,vcm,item):
             node["status"] = "pending"
             node["complete"] = 66
     else:
-        node["status"] = "destroyed"
-        node["complete"] = 100
+        if item["deployed"] == "true":
+            node["satus"] = "pending"
+            node["complete"] = 66
+        else
+            node["status"] = "destroyed"
+            node["complete"] = 100
     return node
 
 def get_status(opts, vcm):
@@ -533,6 +584,7 @@ def get_status(opts, vcm):
     for vm in status.keys():
         node = status[vm]
         node = convertNodeData(opts,vcm,node)
+        node["created"] = vcm.get_vapp_vm_creation_time(opts["vapp"], vm)
         nodes.append(node)
     return nodes
 
@@ -561,6 +613,7 @@ def add_node(opts, vcm):
     status = vcm.add_vm_to_vapp(opts["vapp"], opts["imageid"], networks, opts["ipMode"], opts["name"])
     nodeStatus = vcm.get_vm_status(opts["vapp"], opts["name"])
     myNode = convertNodeData(opts, vcm, nodeStatus[opts["name"]])
+    myNode["created"] = vcm.get_vapp_vm_creation_time(opts["vapp"], opts["name"])
     ret = { "CreateNodeResponse":{"version":1, "code":202, "nodes":[ myNode ]}}
     print json.dumps(ret)
 
@@ -698,6 +751,10 @@ def setup(opts):
 
     if "vdc" not in opts.keys():
         sys.stderr.write("ERROR - 'vdc' must be specified in the VCD config file: " + opts["cred1"] + "\n")
+        sys.exit(1)
+
+    if "sizeid" not in opts.keys():
+        sys.stderr.write("ERROR - 'sizeid' must be specified in the VCD config file: " + opts["cred1"] + "\n")
         sys.exit(1)
 
     # Store state in zxtm/internal if being run by vTM
