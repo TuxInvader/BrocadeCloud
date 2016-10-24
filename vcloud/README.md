@@ -32,6 +32,7 @@ privNet   private_network_1
 networks  private_network_2, private_network_3, private_network_4
 ipMode    POOL
 customize true
+sizeid    any
 ```
 
 You should set the `apiHost, user, and pass` to match the VCD API you will be connecting to. The `org, and vdc`
@@ -46,6 +47,8 @@ The `pubNet` and `privNet` options should contain a single named network, while 
 comma separated list. Obviously the named networks must exist in your VApp.  
 
 The `ipMode` setting should be either `POOL` or `DHCP` to match the IP Allocation method you are using.  
+
+The `sizeid` value can be any string you like, but it must match the `Machine Type` you set on your pool.  
 
 ### Create Cloud Credentials
 
@@ -69,7 +72,8 @@ box.
 
 You should now be at the AutoScaler settings: `Services -> Pools -> [Pool Name] -> AutoScaling`. Set `autoscale!external`
 to "no", and then set `Cloud Credentials` to your new VCD Credentials. The `Image ID` needs to be set to the name of the
-vApp Template that you will be cloning VMs from. You need to enter a value in `Machine Type`, but VCD doesn't use it.
+vApp Template that you will be cloning VMs from. You need to enter a value in `Machine Type` and it should match the
+`sizeid` value you entered in your vapp configuration file.  
 Finally set the `Name Prefix` to something appropriate.  
 
 For Example:
