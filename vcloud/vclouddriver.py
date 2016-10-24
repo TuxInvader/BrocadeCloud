@@ -287,25 +287,27 @@ class VCloudManager(object):
         if ct is not None:
             headers["Content-Type"] = ct
         response = requests.post(uri, headers=headers, data=data)
+        self._debug("POST: {}\n".format(uri))
+        self._debug("Headers: {}\n".format(headers))
+        self._debug("DATA: {}\n".format(data))
+        self._debug("{} Task Submitted.\n".format(name))
         if response.status_code != 202:
-            self._debug("POST: {}\n".format(uri))
-            self._debug("Headers: {}\n".format(headers))
-            self._debug("DATA: {}\n".format(data))
             raise Exception("ERROR: Task submission failed. Code: {},".format(response.status_code) +
                 " Data: {}".format(response.text))
         self._debug("{} Running.\n".format(name))
         task = ET.fromstring(response.text)
         status = self.wait_for_task(task)
-        self._debug("{} Completion Status: {}\n".format(name, status))
+        self._debug("{} Task Complete. Status: {}\n".format(name, status))
         return status
 
-    def add_vm_to_vapp(self, vapp, template, network, vm):
+    def add_vm_to_vapp(self, vapp, template, networks, ipMode, vm):
         if template not in self.templates.keys():
             raise Exception("Template has not been discovered: {}".format(template))
-        if network not in self.vapp_networks.keys():
-            raise Exception("Network has not been discovered: {}".format(network))
+        for network in networks:
+            if network not in self.vapp_networks.keys():
+                raise Exception("Network has not been discovered: {}".format(network))
         rvo = RecomposeVAppObject(self.ns, self.customize)
-        rvo.add_vm_to_vapp(network, self.vapp_networks[network], vm, template, self.config)
+        rvo.add_vm_to_vapp(networks, self.vapp_networks, ipMode, vm, template, self.config)
         xml = rvo.to_string()
         uri = self.vapps[vapp] + "/action/recomposeVApp"
         ct = "application/vnd.vmware.vcloud.recomposeVAppParams+xml"
@@ -352,36 +354,63 @@ class VCloudManager(object):
         uvp = Element("{"+ self.ns + "}UndeployVAppParams")
         uvp.append(upa)
         xml = ET.tostring(uvp)
-        status = self.submit_task(uri, "Power Off", ct, xml)
+        try:
+            status = self.submit_task(uri, "Power Off", ct, xml)
+        except Exception as e:
+            if "is not running" in str(e):
+                self._debug("VM Appears to be powered off already, continuing....\n")
+                return "success"
+            else:
+                raise e
+            
         return status
 
 
-class RecomposeVAppObject(ElementTree):
+class RecomposeVAppObject(object):
 
     def __init__(self, ns, customize=False, text="Recompose VApp"):
 
-        root = Element("RecomposeVAppParams")
-        super(RecomposeVAppObject, self).__init__(root)    
+        self._root = Element("RecomposeVAppParams")
         self.ns = ns
+        self.ovf = "http://schemas.dmtf.org/ovf/envelope/1"
         self.customize = customize
         desc = Element("Description")
         desc.text = text
-        root.append(desc)
+        self._root.append(desc)
 
-    def add_vm_to_vapp(self, netName, netLink, vmName, template, config):
-        if netName not in config["NET"].keys():
-            raise Exception("Network has not been discovered: {}".format(netName))
+    def add_vm_to_vapp(self, netNames, netLinks, ipMode, vmName, template, config):
         if template not in config["TMPL"].keys():
             raise Exception("Template has not been discovered: {}".format(template))
 
+        if ipMode not in [ "POOL", "DHCP" ]:
+            raise Exception("IP Address Allocation 'ipMode' should be one of 'POOL' or 'DHCP'")
+
         # Configure the Template
-        sourcedItem = Element("SourcedItem")
+        sourcedItem = Element("{" + self.ns + "}SourcedItem")
         vm = config["TMPL"][template].find(".//{" + self.ns + "}Vm")
         source = Element("Source", href=vm.attrib.get("href"), name=vmName)
         instParams = Element("InstantiationParams")
-        netConfig = config["TMPL"][template].find(".//{" + self.ns + "}NetworkConnectionSection")
-        netConfig.find(".//{" + self.ns + "}NetworkConnection").set("network", netName)
-        instParams.append(netConfig)
+        netConnSec = Element("NetworkConnectionSection")
+        netConnInf = Element("{" + self.ovf + "}Info")
+        netConnInf.text = "Specifies the available VM network connections"
+        netConnSec.append(netConnInf)
+        for i in xrange(len(netNames)):
+            netConn = Element("NetworkConnection", network=netNames[i], needsCustomization="true")
+            nci = Element("NetworkConnectionIndex")
+            nci.text = str(i)
+            ipAddr = Element("IpAddress")
+            connected = Element("IsConnected")
+            connected.text = "true"
+            macAddr = Element("MACAddress")
+            allocation = Element("IpAddressAllocationMode")
+            allocation.text = ipMode
+            netConn.append(nci)
+            netConn.append(ipAddr)
+            netConn.append(connected)
+            netConn.append(macAddr)
+            netConn.append(allocation)
+            netConnSec.append(netConn)   
+        instParams.append(netConnSec)
         sourcedItem.append(source)
         if self.customize:
             vgp = Element("VmGeneralParams")
@@ -396,10 +425,13 @@ class RecomposeVAppObject(ElementTree):
         delItem = Element("{" + self.ns + "}DeleteItem", href=nodeLink)
         self._root.append(delItem)
 
-    def dump(self):
-        self.write(sys.stdout, encoding="utf-8", xml_declaration=True, method="xml")
+    def fix_up_name_space(self):
+        #self._root.set("xmlns", self.ns)
+        #self._root.set("xmlns:ovf", "http://schemas.dmtf.org/ovf/envelope/1")
+        print self._root.items()
 
     def to_string(self, encoding="utf-8", method="xml"):
+        self.fix_up_name_space()
         return ET.tostring(self._root, encoding, method)
         
 # Script Functions
@@ -411,18 +443,22 @@ def help():
         action: [status|createnode|destroynode|get-vdc-info]
 
         common options:
-            --verbose=1          Print verbose logging messages to the CLI
-            --cloudcreds=<file>  Zeus config file containing the credentials
+            --verbose          Print verbose logging messages to the CLI
+            --cloudcreds=<CC>  vTM Cloud Credential name. The script will try
+                               to locate this file under $ZEUSHOME.
+                               Only cred1 is used, and should point to your
+                               VApp configuration file.
 
-        alternatively set credentials manually:
-            --cred1=configfile 
+        When running manually, you can pass the VApp config file directly: 
 
-        configuration file:
+            --cred1=<VApp configfile>
+
+        Configuration file:
         -------------------
 
         The config file should include: apiHost, user, pass, org, vdc, vapp,
         and network. You may also override these by passing them on the
-        command line. Eg: --apiHost or --vdc
+        command line. Eg: --apiHost, --vdc, --vapp, etc
 
         action-specific options:
         ------------------------
@@ -433,26 +469,33 @@ def help():
             --imageid=<template>  The template to use 
             --sizeid=<size>       Not used
 
-        destroynode         Remove a node from the cloud
+        destroynode               Remove a node from the cloud
 
-            --id=<uniqueid>     ID of the node to delete
-            --name=<nodename>   Name of the node to delete
+            --id=<uniqueid>       ID of the node to delete
+            --name=<nodename>     Name of the node to delete
 
-        status              Get current node status 
+        status                    Get current node status 
 
-            --name=<nodename>   Display the status of the named node only.
+            --name=<nodename>     Display the status of the named node only
 
-        get-vdc-info          Display a list of resource in your VDC
+        get-vdc-info              Display a list of resource in your VDC
+
+            --wrap                Wrap output to match the console width
 
 """
     sys.stderr.write(text)
     sys.exit(1)
 
 def convertNodeData(opts,vcm,item):
+    networks = get_net_list(opts)
     node = { "uniq_id": item['id'], "name": item["name"],
         "created": "Sat 22 Oct 18:52:12 GMT 2016",
-        "private_ip": item["nets"][opts["network"]],
-        "public_ip": item["nets"][opts["network"]] }
+        "public_ip": item["nets"][networks[0]]}
+
+    if len(networks) >= 2 and networks[1] in item["nets"].keys():
+        node["private_ip"] = item["nets"][networks[1]]
+    else:
+        node["private_ip"] = item["nets"][networks[0]]
 
     status = int(item["status"])
     if ( status < 4 ):
@@ -483,14 +526,30 @@ def get_status(opts, vcm):
         nodes.append(node)
     return nodes
 
+def get_net_list(opts):
+    networks = []
+    if "pubNet" in opts.keys():
+        networks.append(opts['pubNet'])
+    if "privNet" in opts.keys():
+        networks.append(opts['privNet'])
+    if "networks" in opts.keys():
+        networks += opts['networks'].split(',')
+    if len(networks) == 0:
+        sys.stderr.write("ERROR - You must provide atleast one of 'networks', " +
+            "'pubNet' or 'privNet' in your configfile: {}\n".format(opts['cred1']))
+        sys.exit(1)
+    return [net.strip() for net in networks]
+
 def add_node(opts, vcm):
     if "name" not in opts.keys() or "imageid" not in opts.keys():
         sys.stderr.write("ERROR - You must provide --name, and --imageid to create a node\n")
         sys.exit(1)
 
     vcm.get_vapp_template_config(opts["imageid"])
-    vcm.get_vapp_network_config(opts['vapp'], opts["network"])
-    status = vcm.add_vm_to_vapp(opts["vapp"], opts["imageid"], opts["network"], opts["name"])
+    networks = get_net_list(opts)
+    for net in networks:
+        vcm.get_vapp_network_config(opts['vapp'], net)
+    status = vcm.add_vm_to_vapp(opts["vapp"], opts["imageid"], networks, opts["ipMode"], opts["name"])
     nodeStatus = vcm.get_vm_status(opts["vapp"], opts["name"])
     myNode = convertNodeData(opts, vcm, nodeStatus[opts["name"]])
     ret = { "CreateNodeResponse":{"version":1, "code":202, "nodes":[ myNode ]}}
@@ -525,16 +584,37 @@ def del_node(opts, vcm):
 
     print json.dumps(ret)
 
-def print_table(dictionary, spacing=3):
+def print_table(dictionary, wrap=False, spacing=3):
+    kl = 0
+    vl = 0
+    if wrap:
+        columns = int(os.popen('stty size', 'r').read().split()[1])
     for key in dictionary.keys():
-        print "\n{}\n{}".format(key,"-"*len(key))
-        ml = 0
         for item in dictionary[key].keys():
-            ml = len(item) if len(item) > ml else ml
+            kl = len(item) if len(item) > kl else kl
+            vl = len(dictionary[key][item]) if len(dictionary[key][item]) > vl else vl
+    if wrap and kl+spacing >= columns:
+        print "ABORTING WRAP: Columns less than Key Size"
+        wrap = False
+    for key in dictionary.keys():
+        tl = kl+vl+spacing
+        if wrap:
+            tl = columns if tl > columns else tl
+        print "\n{}\n\n{}\n{}".format("_"*tl, key, "~"*tl)
         for item in dictionary[key].keys():
-            sp = ml - len(item) + spacing
-            print "{}{}| {}".format(item, " "*sp, dictionary[key][item])
-        print ""
+            sp = kl - len(item) + spacing
+            line = "{}{}{}".format(item, " "*sp, dictionary[key][item])
+            if wrap:
+                print line[:columns]
+                line = line[columns:]
+                while line:
+                    tab=kl+spacing
+                    print "{}{}".format(" "*tab, line[:columns-tab])
+                    line = line[columns-tab:]
+            else:
+                print line
+
+        print "{}".format("~"*tl)
 
 def get_vdc_info(opts, vcm):
     to_print = {}
@@ -542,10 +622,13 @@ def get_vdc_info(opts, vcm):
     to_print["Virtual DCs"] = vcm.list_vdcs()
     to_print["Virtual DC Networks"] = vcm.list_networks()
     to_print["Virtual Apps"] = vcm.list_vapps()
-    to_print["Virtual App Networks"] = vcm.list_vapp_networks(opts["vapp"])
+    to_print["Virtual App Networks: {}".format(opts['vapp'])] = vcm.list_vapp_networks(opts["vapp"])
     to_print["Virtual AppTemplates"] = vcm.list_vapp_templates()
 
-    print_table(to_print)
+    wrap = False
+    if "wrap" in opts.keys():
+        wrap = True
+    print_table(to_print, wrap)
 
 def get_cloud_credentials(opts):
 
@@ -643,6 +726,9 @@ def main():
         kvp = re.search("--([^=]+)=*(.*)", arg)
         if kvp != None:
             opts[kvp.group(1)] = kvp.group(2)
+
+    if "verbose" in opts.keys():
+        opts["verbose"] = True
 
     # Check the action and call the appropriate function
     if action.lower() == "help":
