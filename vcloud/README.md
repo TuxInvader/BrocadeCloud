@@ -37,16 +37,16 @@ sizeid    any
 
 You should set the `apiHost, user, and pass` to match the VCD API you will be connecting to. The `org, and vdc`
 should match your VCloud Organization, and Virtual Data Center names. The `vapp` is the name of the VApp which
-we will be deploying machines into, and the `network` is the name of the network we will deploy on.  
-
-VCD will run Guest Customization if your template requires them, but if you want to explicitly request them, 
-then you can set the optional `customize` parameter to `true` 
+we will be deploying machines into.  
 
 You must provide at least one network. This can be any combination of `pubNet`, `privNet` and `networks`. 
 The `pubNet` and `privNet` options should contain a single named network, while the `networks` option can be a
 comma separated list. Obviously the named networks must exist in your VApp.  
 
 The `ipMode` setting should be either `POOL` or `DHCP` to match the IP Allocation method you are using.  
+
+VCD will run Guest Customization if your template requires them, but if you want to explicitly request them, 
+then you can set the optional `customize` parameter to `true` 
 
 The `sizeid` value can be any string you like, but it must match the `Machine Type` you set on your pool.  
 
