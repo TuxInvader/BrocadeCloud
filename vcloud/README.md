@@ -30,6 +30,7 @@ vapp      testapp
 pubNet    Direct Internet connection
 privNet   private_network_1
 networks  private_network_2, private_network_3, private_network_4
+ipMode    POOL
 customize true
 ```
 
@@ -43,6 +44,8 @@ then you can set the optional `customize` parameter to `true`
 You must provide at least one network. This can be any combination of pubNet, privNet and networks. The pubNet
 and privNet options should contain a single named network, while networks option can be a comma separetd list.
 Obviously the named networks must exist in your VApp.  
+
+The `ipMode` setting should be either `POOL` or `DHCP` to match the IP Allocation method you are using.  
 
 ### Create Cloud Credentials
 
