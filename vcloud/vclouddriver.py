@@ -3,8 +3,8 @@
 # VCloud Director - Autoscaling Driver and utility for Brocade vTM
 #
 # Name:     vclouddriver.py
-# Version:  0.1
-# Date:     2016-10-21
+# Version:  0.2
+# Date:     2016-10-25
 #  
 # Copyright 2016 Brocade Communications Systems, Inc.  All rights reserved.
 #
@@ -202,10 +202,24 @@ class VCloudManager(object):
         self.config["VAPP"][vapp] = self._do_get_config(vapp, self.vapps)
         return self.config["VAPP"][vapp]
 
-    def get_vapp_metadata(self, vapp, org=None, vdc=None):
+    def get_vapp_metadata(self, vapp, key=None, org=None, vdc=None):
         self.list_vapps(org, vdc)
         self.config["META"][vapp] = self._do_get_config(vapp, self.vapps, "/metadata")
-        return self.config["META"][vapp]
+        if key is None:
+            return self.config["META"][vapp]
+        else:
+            return self._get_metadata_entry(self.config["META"][vapp], key)
+
+    def add_vapp_metadata(self, vapp, dictionary, org=None, vdc=None):
+        self.list_vapps(org, vdc)
+        if vapp not in self.vapps:
+            raise Exception("Error: No such VApp: {}".format(vapp))
+        uri = self.vapps[vapp] + "/metadata"
+        metadata = self._build_metadata(dictionary)
+        success = self.submit_task(uri, name="Set Metadata", 
+            ct="application/vnd.vmware.vcloud.metadata+xml",
+            data=ET.tostring(metadata))
+        return success
 
     def get_vapp_template_config(self, vapp, org=None, vdc=None):
         self.list_vapps(org, vdc)
@@ -224,17 +238,38 @@ class VCloudManager(object):
         self.config["VMS"][vm] = self._do_get_config(vm,self.vms)
         return self.config["VMS"][vm]
 
-    def get_vapp_vm_metadata(self, vapp, vm, org=None, vdc=None):
+    def get_vapp_vm_metadata(self, vapp, vm, key=None, org=None, vdc=None):
         self.list_vapp_vms(vapp, org, vdc)
         self.config["META"][vm] = self._do_get_config(vm, self.vms, "/metadata")
-        return self.config["META"][vm]
+        if key is None:
+            return self.config["META"][vm]
+        else:
+            return self._get_metadata_entry(self.config["META"][vm], key)
 
-    def add_vapp_vm_metadata(self, vapp, vm, key, value, mdType=None, org=None, vdc=None):
+    def add_vapp_vm_metadata(self, vapp, vm, dictionary, org=None, vdc=None):
         self.list_vapp_vms(vapp, org, vdc)
         if vm not in self.vms:
             raise Exception("Error: No such VM: {}".format(vm))
-        xsi = "http://www.w3.org/2001/XMLSchema-instance"
+        uri = self.vms[vm] + "/metadata"
+        metadata = self._build_metadata(dictionary)
+        success = self.submit_task(uri, name="Set Metadata", 
+            ct="application/vnd.vmware.vcloud.metadata+xml",
+            data=ET.tostring(metadata))
+        return success
+
+    def _build_metadata(self, dictionary):
         metadata = Element("{" + self.ns + "}Metadata")
+        for key in dictionary.keys():
+            value = dictionary[key]["value"]
+            if "type" in dictionary[key].keys():
+                mdType = dictionary[key]["type"]
+            else:
+                mdType = None
+            self._add_metadata_entry(metadata, key, value, mdType)
+        return metadata
+
+    def _add_metadata_entry(self, md, key, value, mdType="MetadataStringValue"):
+        xsi = "http://www.w3.org/2001/XMLSchema-instance"
         mde = Element("MetadataEntry")
         mKey = Element("Key")
         mKey.text = key
@@ -248,12 +283,17 @@ class VCloudManager(object):
             mde.append(typedVal)
         else:
             mde.append(mVal)
-        metadata.append(mde) 
-        uri = self.vms[vm] + "/metadata"
-        success = self.submit_task(uri, name="Set Metadata", 
-            ct="application/vnd.vmware.vcloud.metadata+xml",
-            data=ET.tostring(metadata))
-        return success
+        md.append(mde)
+
+    def _get_metadata_entry(self, md, key):
+        kvps = md.findall("{" + self.ns + "}MetadataEntry")
+        for kvp in kvps:
+            entry = kvp.find("{" + self.ns + "}Key")
+            if entry is not None and entry.text == key:
+                value = kvp.find(".//{" + self.ns + "}Value")
+                if value is not None:
+                    return value.text
+        return None
 
     def set_vapp_vm_creation_time(self, vapp, vm, org=None, vdc=None):
         stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -262,14 +302,10 @@ class VCloudManager(object):
 
     def get_vapp_vm_creation_time(self, vapp, vm, org=None, vdc=None):
         md = self.get_vapp_vm_metadata(vapp, vm, org, vdc)
-        kvps = md.findall("{" + self.ns + "}MetadataEntry")
-        for kvp in kvps:
-            key = kvp.find("{" + self.ns + "}Key")
-            if key is not None and key.text == "created":
-                value = kvp.find(".//{" + self.ns + "}Value")
-                if value is not None:
-                    return value.text
-        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(0))
+        epoc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(0))
+        value = self._get_metadata_entry(md, "created")
+        value = epoc if value is None else value
+        return value 
 
     def list_networks(self, org=None, vdc=None):
         org, vdc = self._check_args(org, vdc)
@@ -371,9 +407,6 @@ class VCloudManager(object):
         if status == "success":
             self.get_vapp_config(vapp)
             self.list_vapp_vms(vapp)
-            if vm in self.vms:
-                status = self.set_vapp_vm_creation_time(vapp, vm, org=None, vdc=None)
-                status = self.poweron(vm)
         return status
 
     def del_vm_from_vapp(self, vapp, vm):
@@ -579,6 +612,42 @@ def convertNodeData(opts,vcm,item):
             node["complete"] = 100
     return node
 
+def get_delta(vcm, opts, nodes):
+
+    now = int(time.time())
+    history = vcm.get_vapp_metadata(opts["vapp"], "vtm_history")
+
+    if history is None:
+        history = { now: nodes }
+        metadata = { "vtm_history": { "value": json.dumps(history), "type": "MetadataStringValue" } }
+        vcm.add_vapp_metadata(opts["vapp"], metadata)
+        return nodes
+
+    history = json.loads(history)
+    deltasince = int( opts["deltasince"] ) + 10
+    entries = sorted(history.keys())
+    entry = max([entry for entry in entries if int(entry) <= deltasince or entry == entries[0]])
+    oldNodes = {node["name"]:node for node in history[entry]}
+    current = {node["name"]:node for node in nodes}
+
+    delta = []
+    for node in oldNodes.keys():
+        if node in current.keys():
+            if current[node] != oldNodes[node]:
+                delta.append(current[node])
+        else:
+            oldNodes[node]["status"] = "destroyed"
+            oldNodes[node]["complete"] = 100
+            delta.append(oldNodes[node])
+
+    while len(entries) >= 4:
+        del history[entries.pop(0)]
+
+    history[now] = nodes
+    metadata = { "vtm_history": { "value": json.dumps(history), "type": "MetadataStringValue" } }
+    vcm.add_vapp_metadata(opts["vapp"], metadata)
+    return delta
+
 def get_status(opts, vcm):
     nodes = []
     if "name" in opts.keys():
@@ -591,6 +660,10 @@ def get_status(opts, vcm):
         node = convertNodeData(opts,vcm,node)
         node["created"] = vcm.get_vapp_vm_creation_time(opts["vapp"], vm)
         nodes.append(node)
+
+    if "deltasince" in opts.keys():
+        nodes = get_delta(vcm, opts, nodes)
+
     return nodes
 
 def get_net_list(opts):
@@ -616,9 +689,13 @@ def add_node(opts, vcm):
     networks = get_net_list(opts)
     vcm.list_vapp_networks(opts['vapp'])
     status = vcm.add_vm_to_vapp(opts["vapp"], opts["imageid"], networks, opts["ipMode"], opts["name"])
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    metadata = { "created": { "value": stamp, "type": "MetadataDateTimeValue" }}
+    status = vcm.add_vapp_vm_metadata(opts["vapp"], opts["name"], metadata)
+    status = vcm.poweron(opts["name"])
     nodeStatus = vcm.get_vm_status(opts["vapp"], opts["name"])
     myNode = convertNodeData(opts, vcm, nodeStatus[opts["name"]])
-    myNode["created"] = vcm.get_vapp_vm_creation_time(opts["vapp"], opts["name"])
+    myNode["created"] = stamp
     ret = { "CreateNodeResponse":{"version":1, "code":202, "nodes":[ myNode ]}}
     print json.dumps(ret)
 
