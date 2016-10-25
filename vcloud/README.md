@@ -93,9 +93,11 @@ That's it, you're done!
 ##Notes
 
 ### VCD Metadata
-The size of all Metadata for an object, computed as the sum of all Key and TypedValue UTF-8 strings in all 
-MetadataEntry elements in the GENERAL domain, cannot exceed 128 KB. An additional 16KB of MetadataEntry 
-content can be created in the SYSTEM domain.
+[Vcloud Documentation states](https://pubs.vmware.com/vca/index.jsp?topic=%2Fcom.vmware.vcloud.api.
+doc_56%2FGUID-8D8C68F0-AC63-4134-A57E-326E510FC690.html)
+> The size of all Metadata for an object, computed as the sum of all Key and TypedValue UTF-8 strings in all 
+> MetadataEntry elements in the GENERAL domain, cannot exceed 128 KB. An additional 16KB of MetadataEntry 
+> content can be created in the SYSTEM domain.
 
 We store the last two status runs in the VApp metadata. This works out at ~250 bytes (237 + vmName) per node
 in the Vapp, per run, so the history uses ~500 (2 * 250) bytes per VM in the VApp.  
