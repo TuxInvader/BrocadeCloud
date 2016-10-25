@@ -90,3 +90,18 @@ Review the other settings, and click `update` when ready.
 
 That's it, you're done!
 
+##Notes
+
+### VCD Metadata
+The size of all Metadata for an object, computed as the sum of all Key and TypedValue UTF-8 strings in all 
+MetadataEntry elements in the GENERAL domain, cannot exceed 128 KB. An additional 16KB of MetadataEntry 
+content can be created in the SYSTEM domain.
+
+We store the last two status runs in the VApp metadata. This works out at ~250 bytes (237 + vmName) per node
+in the Vapp, per run, so the history uses ~500 (2 * 250) bytes per VM in the VApp.  
+
+If The autoScaler is the only thing putting metadata on the VApp, this means we'll run into storage issues
+if we need to track more than 250 VMs in a single VApp.
+
+We also store a single "created" timestamp in each autoscaled node.
+
