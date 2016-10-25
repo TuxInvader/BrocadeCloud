@@ -640,7 +640,7 @@ def get_delta(vcm, opts, nodes):
             oldNodes[node]["complete"] = 100
             delta.append(oldNodes[node])
 
-    while len(entries) >= 4:
+    while len(entries) >= 2:
         del history[entries.pop(0)]
 
     history[now] = nodes
